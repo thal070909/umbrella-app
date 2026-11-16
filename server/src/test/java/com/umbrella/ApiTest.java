@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.umbrella.spot.KakaoPlaceClient;
 import com.umbrella.spot.OverpassClient;
 import com.umbrella.weather.OpenMeteoClient;
 import com.umbrella.weather.OpenMeteoClient.Current;
@@ -36,6 +37,9 @@ class ApiTest {
 
     @MockitoBean
     private OverpassClient overpassClient;
+
+    @MockitoBean
+    private KakaoPlaceClient kakaoPlaceClient;
 
     @Test
     void 날씨_API는_숫자와_함께_지금_할_일을_내려준다() throws Exception {

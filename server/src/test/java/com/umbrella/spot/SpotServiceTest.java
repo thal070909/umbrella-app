@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.umbrella.config.UmbrellaProperties;
+import com.umbrella.spot.KakaoPlaceClient.KakaoPlace;
 import com.umbrella.spot.OverpassClient.Element;
 import com.umbrella.spot.OverpassClient.OverpassResponse;
 import java.time.Duration;
@@ -54,10 +55,83 @@ class SpotServiceTest {
         }
     }
 
+    // 카테고리 코드별 결과·실패를 정할 수 있는 가짜 카카오
+    static class FakeKakao implements KakaoPlaceClient {
+        final Map<String, List<KakaoPlace>> results = new ConcurrentHashMap<>();
+        boolean fails;
+        final AtomicInteger calls = new AtomicInteger();
+
+        @Override
+        public List<KakaoPlace> searchCategory(String code, double lat, double lon, int radiusMeters) {
+            calls.incrementAndGet();
+            if (fails) {
+                throw new IllegalStateException("429 한도 초과");
+            }
+            return results.getOrDefault(code, List.of());
+        }
+    }
+
     private SpotService service(FakeOverpass fake, Duration timeout) {
+        return service(fake, new FakeKakao(), "", timeout);
+    }
+
+    private SpotService service(FakeOverpass overpass, FakeKakao kakao, String kakaoKey, Duration timeout) {
         UmbrellaProperties properties = new UmbrellaProperties(List.of(), "test", null,
-                new UmbrellaProperties.Spots(ENDPOINTS, timeout, Duration.ofMinutes(30), Duration.ofHours(24)));
-        return new SpotService(fake, executor, properties);
+                new UmbrellaProperties.Spots(ENDPOINTS, timeout, Duration.ofMinutes(30), Duration.ofHours(24)),
+                new UmbrellaProperties.Kakao(kakaoKey, "http://kakao.test", Duration.ofSeconds(2)));
+        return new SpotService(overpass, kakao, executor, properties);
+    }
+
+    @Test
+    void 카카오_키가_있으면_비_피하기는_카페와_음식점을_합쳐_가까운_순으로_보여준다() {
+        FakeOverpass overpass = new FakeOverpass();
+        FakeKakao kakao = new FakeKakao();
+        kakao.results.put("CE7", List.of(new KakaoPlace("빗방울 카페", "카페", "240", "서울 중구 명동길 1", null)));
+        kakao.results.put("FD6", List.of(
+                new KakaoPlace("우산 국밥", "음식점", "90", null, "서울 중구 명동2가 3"),
+                new KakaoPlace("빗방울 카페", "카페", "500", "서울 중구 다른길 9", null)));
+
+        SpotResponse response = service(overpass, kakao, "test-key", Duration.ofSeconds(8))
+                .spots(LAT, LON, SpotCategory.RAIN, false);
+
+        assertThat(response.source()).isEqualTo("kakao");
+        assertThat(response.spots()).extracting(SpotResponse.Spot::name).containsExactly("우산 국밥", "빗방울 카페");
+        assertThat(response.spots().get(0).detail()).isEqualTo("서울 중구 명동2가 3");
+        assertThat(response.spots().get(1).walkMinutes()).isEqualTo(4);
+        assertThat(overpass.calls.get()).isZero();
+    }
+
+    @Test
+    void 카카오가_실패하면_OpenStreetMap으로_이어서_찾는다() {
+        FakeOverpass overpass = new FakeOverpass();
+        FakeKakao kakao = new FakeKakao();
+        kakao.fails = true;
+
+        SpotResponse response = service(overpass, kakao, "test-key", Duration.ofSeconds(8))
+                .spots(LAT, LON, SpotCategory.RAIN, false);
+
+        assertThat(response.source()).isEqualTo("openstreetmap");
+        assertThat(response.spots()).isNotEmpty();
+    }
+
+    @Test
+    void 카카오_결과는_저장하지_않아서_다시_들어오면_다시_부른다() {
+        FakeKakao kakao = new FakeKakao();
+        SpotService service = service(new FakeOverpass(), kakao, "test-key", Duration.ofSeconds(8));
+
+        service.spots(LAT, LON, SpotCategory.RAIN, false);
+        service.spots(LAT, LON, SpotCategory.RAIN, false);
+
+        assertThat(kakao.calls.get()).isEqualTo(4);
+    }
+
+    @Test
+    void 카카오_키가_없으면_카카오를_부르지_않는다() {
+        FakeKakao kakao = new FakeKakao();
+
+        service(new FakeOverpass(), kakao, "", Duration.ofSeconds(8)).spots(LAT, LON, SpotCategory.RAIN, false);
+
+        assertThat(kakao.calls.get()).isZero();
     }
 
     @Test

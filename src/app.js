@@ -186,6 +186,7 @@ const els = {
   let lastWeather = null;
   let spotsLoadedFor = null;
   let staleNotice = false; // 서버가 예전 검색 결과를 대신 준 경우
+  let spotSource = null;   // 장소 정보 출처 (kakao | openstreetmap)
   let spotCategory = 'rain'; // 'rain' | 'heat'
 
   const SEOUL = { lat:37.5665, lon:126.9780 };
@@ -469,9 +470,11 @@ const els = {
         category: s.category,
         emoji: EMOJI_BY_CATEGORY[s.category] ?? '🧊',
         dist: s.distanceMeters,
+        detail: s.detail,
         sponsored: false
       }));
       staleNotice = data.stale;
+      spotSource = data.source;
 
       spotsLoadedFor = key;
 
@@ -516,6 +519,7 @@ const els = {
             <span class="dot"></span>
             <span>도보 ${walkMinutes(s.dist)}분 · ${s.dist}m</span>
           </div>
+          ${s.detail ? `<div class="spot-detail">${escapeHtml(s.detail)}</div>` : ''}
         </div>
       </div>
     `).join('');
@@ -531,7 +535,11 @@ const els = {
     const staleMsg = staleNotice
       ? `<div class="notice-banner" style="display:flex; margin:0 20px 12px;">🕒 지금은 검색이 원활하지 않아 조금 전에 찾은 결과를 보여드려요</div>`
       : '';
-    els.spotsContent.innerHTML = `${staleMsg}<div class="spot-list">${cards}</div>${emptyMsg}`;
+    // 장소 정보 출처 표시 (OpenStreetMap은 출처 표기가 이용 조건)
+    const SOURCE_LABEL = {kakao: '카카오', openstreetmap: '© OpenStreetMap 기여자'};
+    const sourceMsg = SOURCE_LABEL[spotSource]
+      ? `<div class="disclosure">장소 정보: ${SOURCE_LABEL[spotSource]}</div>` : '';
+    els.spotsContent.innerHTML = `${staleMsg}<div class="spot-list">${cards}</div>${emptyMsg}${sourceMsg}`;
   }
 
   function escapeHtml(str){
