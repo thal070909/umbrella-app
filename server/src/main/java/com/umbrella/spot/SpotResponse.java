@@ -2,9 +2,11 @@ package com.umbrella.spot;
 
 import java.util.List;
 
-// stale = 세 서버가 모두 실패해서, 전에 받아 둔 결과를 대신 보여 주는 중
-public record SpotResponse(String category, List<Spot> spots, boolean stale) {
+// source = 장소 정보 출처(kakao / openstreetmap). 화면에 출처를 표시한다
+// stale = 검색 서버가 모두 실패해서, 전에 받아 둔 결과를 대신 보여 주는 중
+public record SpotResponse(String category, List<Spot> spots, String source, boolean stale) {
 
-    public record Spot(String name, String category, int distanceMeters, int walkMinutes) {
+    // detail = 이름 아래 한 줄 (주소, 운영시간 등). 없으면 null
+    public record Spot(String name, String category, int distanceMeters, int walkMinutes, String detail) {
     }
 }

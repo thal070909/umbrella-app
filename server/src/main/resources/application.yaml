@@ -23,3 +23,8 @@ umbrella:
     cache-ttl: 30m
     # 세 곳이 모두 실패하면 이 시간 안에 받아 둔 결과라도 보여 준다
     stale-ttl: 24h
+  kakao:
+    # 카카오 디벨로퍼스 REST API 키. 비어 있으면 비 피하기 스팟도 OpenStreetMap으로 찾는다
+    rest-api-key: ${KAKAO_REST_API_KEY:}
+    base-url: https://dapi.kakao.com
+    timeout: 5s
