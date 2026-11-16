@@ -139,6 +139,19 @@ class SpotServiceTest {
     }
 
     @Test
+    void 일반인이_들어갈_수_없는_구내식당은_비_피하기_목록에서_뺀다() {
+        FakeKakao kakao = new FakeKakao();
+        kakao.results.put("FD6", List.of(
+                new KakaoPlace("서울특별시청 구내식당", "음식점", "21", "서울 중구 세종대로 110", null),
+                new KakaoPlace("남촌회관", "음식점", "79", "서울 중구 세종대로20길 19", null)));
+
+        SpotResponse response = service(new FakeOverpass(), kakao, "test-key", Duration.ofSeconds(8))
+                .spots(LAT, LON, SpotCategory.RAIN, false);
+
+        assertThat(response.spots()).extracting(SpotResponse.Spot::name).containsExactly("남촌회관");
+    }
+
+    @Test
     void 카카오가_실패하면_OpenStreetMap으로_이어서_찾는다() {
         FakeOverpass overpass = new FakeOverpass();
         FakeKakao kakao = new FakeKakao();

@@ -42,6 +42,9 @@ public class SpotService {
     // 비 피하기: 카카오 카테고리 CE7(카페), FD6(음식점)
     static final List<String> KAKAO_RAIN_CODES = List.of("CE7", "FD6");
 
+    // 비를 피하러 들어갈 수 없는 곳 (직원만 쓰는 식당)
+    static final List<String> NOT_OPEN_TO_PUBLIC = List.of("구내식당", "직원식당", "사내식당");
+
     static final String SOURCE_KAKAO = "kakao";
     static final String SOURCE_OSM = "openstreetmap";
     static final String SOURCE_PUBLIC_DATA = "public-data";
@@ -115,6 +118,7 @@ public class SpotService {
         }
         Stream<SpotResponse.Spot> spots = searches.stream()
                 .flatMap(search -> search.join().stream())
+                .filter(place -> isOpenToPublic(place.placeName()))
                 .map(SpotService::toSpot);
         return new SpotResponse(category.name().toLowerCase(), nearestUnique(spots), SOURCE_KAKAO, false);
     }
@@ -228,6 +232,10 @@ public class SpotService {
             return 0;
         }
         return openNow == null ? 1 : 2;
+    }
+
+    static boolean isOpenToPublic(String name) {
+        return name != null && NOT_OPEN_TO_PUBLIC.stream().noneMatch(name::contains);
     }
 
     private static int parseMeters(String distance) {
