@@ -4,13 +4,20 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.umbrella.common.GeoGrid;
 import com.umbrella.config.UmbrellaProperties;
+import com.umbrella.shelter.Shelter;
+import com.umbrella.shelter.ShelterHours;
+import com.umbrella.shelter.ShelterIndex;
+import com.umbrella.shelter.ShelterSync;
 import com.umbrella.spot.KakaoPlaceClient.KakaoPlace;
+import java.time.Clock;
+import java.time.LocalDateTime;
 import com.umbrella.spot.OverpassClient.Element;
 import com.umbrella.spot.OverpassClient.OverpassResponse;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -37,9 +44,14 @@ public class SpotService {
 
     static final String SOURCE_KAKAO = "kakao";
     static final String SOURCE_OSM = "openstreetmap";
+    static final String SOURCE_PUBLIC_DATA = "public-data";
+    // 반경 안에서 가까운 순으로 이만큼 뽑은 뒤, 운영 중인 곳을 앞으로 다시 줄 세운다
+    static final int SHELTER_CANDIDATES = 40;
 
     private final OverpassClient overpassClient;
     private final KakaoPlaceClient kakaoPlaceClient;
+    private final ShelterSync shelterSync;
+    private final Clock clock;
     private final ExecutorService spotExecutor;
     private final List<String> endpoints;
     private final long timeoutMillis;
@@ -48,10 +60,12 @@ public class SpotService {
     // 세 서버가 모두 실패할 때 꺼내 쓰는 예전 결과. fresh보다 오래 들고 있는다
     private final Cache<String, List<Element>> stale;
 
-    public SpotService(OverpassClient overpassClient, KakaoPlaceClient kakaoPlaceClient, ExecutorService spotExecutor,
-                       UmbrellaProperties properties) {
+    public SpotService(OverpassClient overpassClient, KakaoPlaceClient kakaoPlaceClient, ShelterSync shelterSync,
+                       ExecutorService spotExecutor, Clock clock, UmbrellaProperties properties) {
         this.overpassClient = overpassClient;
         this.kakaoPlaceClient = kakaoPlaceClient;
+        this.shelterSync = shelterSync;
+        this.clock = clock;
         this.spotExecutor = spotExecutor;
         this.endpoints = properties.spots().endpoints();
         this.timeoutMillis = properties.spots().timeout().toMillis();
@@ -62,6 +76,13 @@ public class SpotService {
 
     // refresh = 사용자가 '다시 찾기'를 눌렀을 때. 캐시를 건너뛰고 새로 찾는다
     public SpotResponse spots(double lat, double lon, SpotCategory category, boolean refresh) {
+        // 무더위쉼터는 공공데이터를 받아 두었으면 그걸 쓴다 (외부 호출 없이 메모리에서 바로)
+        if (category == SpotCategory.HEAT) {
+            Optional<ShelterIndex> shelters = shelterSync.index();
+            if (shelters.isPresent()) {
+                return fromShelters(shelters.get(), lat, lon, category);
+            }
+        }
         // 비 피하기는 국내 상호가 촘촘한 카카오를 먼저 쓰고, 실패하면 OpenStreetMap으로 이어 간다
         if (category == SpotCategory.RAIN && kakao != null && kakao.enabled()) {
             try {
@@ -172,14 +193,41 @@ public class SpotService {
     private static SpotResponse.Spot toSpot(Element element, double lat, double lon) {
         int meters = (int) Math.round(haversineMeters(lat, lon, element.lat(), element.lon()));
         return new SpotResponse.Spot(element.tags().get("name"), SpotCategory.label(element.tags().get("amenity")),
-                meters, walkMinutes(meters), null);
+                meters, walkMinutes(meters), null, null);
     }
 
     private static SpotResponse.Spot toSpot(KakaoPlace place) {
         int meters = parseMeters(place.distance());
         String address = place.roadAddressName() != null && !place.roadAddressName().isBlank()
                 ? place.roadAddressName() : place.addressName();
-        return new SpotResponse.Spot(place.placeName(), place.categoryGroupName(), meters, walkMinutes(meters), address);
+        return new SpotResponse.Spot(place.placeName(), place.categoryGroupName(), meters, walkMinutes(meters), address,
+                null);
+    }
+
+    // 무더위쉼터는 행정안전부 지정 쉼터 색인에서 찾는다
+    // 지금 운영 중인 곳을 먼저, 그다음 운영시간을 모르는 곳, 문 닫은 곳은 뒤로 (헛걸음하지 않게)
+    SpotResponse fromShelters(ShelterIndex index, double lat, double lon, SpotCategory category) {
+        LocalDateTime now = LocalDateTime.now(clock);
+        List<SpotResponse.Spot> spots = index.nearest(lat, lon, category.radiusMeters(), SHELTER_CANDIDATES).stream()
+                .map(nearby -> {
+                    Shelter shelter = nearby.shelter();
+                    int meters = nearby.distanceMeters();
+                    String type = shelter.type() != null ? shelter.type() : "무더위쉼터";
+                    return new SpotResponse.Spot(shelter.name(), type, meters, walkMinutes(meters),
+                            ShelterHours.describe(shelter), ShelterHours.openNow(shelter, now));
+                })
+                .sorted(Comparator.comparingInt((SpotResponse.Spot spot) -> openRank(spot.openNow()))
+                        .thenComparingInt(SpotResponse.Spot::distanceMeters))
+                .limit(MAX_SPOTS)
+                .toList();
+        return new SpotResponse(category.name().toLowerCase(), spots, SOURCE_PUBLIC_DATA, false);
+    }
+
+    private static int openRank(Boolean openNow) {
+        if (Boolean.TRUE.equals(openNow)) {
+            return 0;
+        }
+        return openNow == null ? 1 : 2;
     }
 
     private static int parseMeters(String distance) {

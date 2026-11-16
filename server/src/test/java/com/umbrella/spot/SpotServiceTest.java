@@ -4,7 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.umbrella.config.UmbrellaProperties;
+import com.umbrella.shelter.Shelter;
+import com.umbrella.shelter.ShelterIndex;
+import com.umbrella.shelter.ShelterSync;
 import com.umbrella.spot.KakaoPlaceClient.KakaoPlace;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
+import tools.jackson.databind.json.JsonMapper;
 import com.umbrella.spot.OverpassClient.Element;
 import com.umbrella.spot.OverpassClient.OverpassResponse;
 import java.time.Duration;
@@ -76,10 +83,40 @@ class SpotServiceTest {
     }
 
     private SpotService service(FakeOverpass overpass, FakeKakao kakao, String kakaoKey, Duration timeout) {
-        UmbrellaProperties properties = new UmbrellaProperties(List.of(), "test", null,
+        UmbrellaProperties properties = properties(kakaoKey, timeout);
+        // 쉼터 키가 없는 상태: 무더위쉼터는 OpenStreetMap으로 찾는다
+        ShelterSync noShelters = new ShelterSync((page, size) -> { throw new IllegalStateException(); }, properties,
+                JsonMapper.builder().build(), executor, CLOCK);
+        return new SpotService(overpass, kakao, noShelters, executor, CLOCK, properties);
+    }
+
+    private static UmbrellaProperties properties(String kakaoKey, Duration timeout) {
+        return new UmbrellaProperties(List.of(), "test", null,
                 new UmbrellaProperties.Spots(ENDPOINTS, timeout, Duration.ofMinutes(30), Duration.ofHours(24)),
-                new UmbrellaProperties.Kakao(kakaoKey, "http://kakao.test", Duration.ofSeconds(2)));
-        return new SpotService(overpass, kakao, executor, properties);
+                new UmbrellaProperties.Kakao(kakaoKey, "http://kakao.test", Duration.ofSeconds(2)),
+                new UmbrellaProperties.Shelter("", "http://shelter.test", "DSSP-IF-10942", 1000, "build/none.json",
+                        Duration.ofHours(24)));
+    }
+
+    // 2026-07-22(수) 오후 2시
+    private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-07-22T05:00:00Z"), ZoneId.of("Asia/Seoul"));
+
+    @Test
+    void 무더위쉼터는_지금_운영_중인_곳을_먼저_보여주고_문_닫은_곳은_뒤로_보낸다() {
+        ShelterIndex index = new ShelterIndex(List.of(
+                new Shelter("1", "가까운데 문 닫은 경로당", LAT + 0.001, LON, "주소1", "경로당", "0900", "1200", false, false, true),
+                new Shelter("2", "조금 먼 주민센터", LAT + 0.004, LON, "주소2", "주민센터", "0900", "1800", true, false, true),
+                new Shelter("3", "시간 모르는 도서관", LAT + 0.002, LON, "주소3", "도서관", null, null, false, false, false)));
+        SpotService service = service(new FakeOverpass(), Duration.ofSeconds(8));
+
+        SpotResponse response = service.fromShelters(index, LAT, LON, SpotCategory.HEAT);
+
+        assertThat(response.source()).isEqualTo("public-data");
+        assertThat(response.spots()).extracting(SpotResponse.Spot::name)
+                .containsExactly("조금 먼 주민센터", "시간 모르는 도서관", "가까운데 문 닫은 경로당");
+        assertThat(response.spots().get(0).openNow()).isTrue();
+        assertThat(response.spots().get(0).detail()).isEqualTo("평일 09:00~18:00 · 주말 개방 · 냉방기");
+        assertThat(response.spots().get(1).openNow()).isNull();
     }
 
     @Test

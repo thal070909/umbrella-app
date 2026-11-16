@@ -28,3 +28,13 @@ umbrella:
     rest-api-key: ${KAKAO_REST_API_KEY:}
     base-url: https://dapi.kakao.com
     timeout: 5s
+  shelter:
+    # 재난안전데이터공유플랫폼(safetydata.go.kr) 인증키. 비어 있으면 무더위쉼터도 OpenStreetMap으로 찾는다
+    service-key: ${SAFETYDATA_SERVICE_KEY:}
+    base-url: https://www.safetydata.go.kr/V2/api
+    service-id: DSSP-IF-10942
+    page-size: 1000
+    # 전국 쉼터를 받아 둔 파일. 서버를 다시 켜도 API 하루 한도를 쓰지 않고 바로 쓴다
+    snapshot-path: ${SHELTER_SNAPSHOT_PATH:./data/shelters.json}
+    # 받아 둔 지 이만큼 지나면 다시 받는다 (쉼터 지정은 자주 바뀌지 않음)
+    refresh-after: 24h
