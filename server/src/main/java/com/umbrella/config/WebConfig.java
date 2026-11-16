@@ -1,7 +1,9 @@
 package com.umbrella.config;
 
 import java.net.http.HttpClient;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.ZoneId;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import org.springframework.context.annotation.Bean;
@@ -46,5 +48,11 @@ public class WebConfig implements WebMvcConfigurer {
     @Bean(destroyMethod = "close")
     public ExecutorService spotExecutor() {
         return Executors.newVirtualThreadPerTaskExecutor();
+    }
+
+    // "지금 운영 중" 판단은 한국 시간 기준
+    @Bean
+    public Clock clock() {
+        return Clock.system(ZoneId.of("Asia/Seoul"));
     }
 }

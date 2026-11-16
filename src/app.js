@@ -464,13 +464,14 @@ const els = {
         lat: userCoords.lat, lon: userCoords.lon, category: spotCategory, refresh: !!force
       });
 
-      const EMOJI_BY_CATEGORY = {'카페':'☕', '음식점':'🍽️', '도서관':'📚', '주민센터':'🏛️'};
+      const EMOJI_BY_CATEGORY = {'카페':'☕', '음식점':'🍽️', '도서관':'📚', '주민센터':'🏛️', '경로당':'🏠'};
       const spots = data.spots.map(s=>({
         name: s.name,
         category: s.category,
         emoji: EMOJI_BY_CATEGORY[s.category] ?? '🧊',
         dist: s.distanceMeters,
         detail: s.detail,
+        openNow: s.openNow,
         sponsored: false
       }));
       staleNotice = data.stale;
@@ -513,6 +514,8 @@ const els = {
           <div class="spot-name-row">
             <div class="spot-name">${escapeHtml(s.name)}</div>
             ${s.sponsored?'<span class="badge">제휴</span>':''}
+            ${s.openNow===true?'<span class="badge open">지금 운영 중</span>':''}
+            ${s.openNow===false?'<span class="badge closed">운영 시간 아님</span>':''}
           </div>
           <div class="spot-meta">
             <span>${s.category}</span>
@@ -536,7 +539,11 @@ const els = {
       ? `<div class="notice-banner" style="display:flex; margin:0 20px 12px;">🕒 지금은 검색이 원활하지 않아 조금 전에 찾은 결과를 보여드려요</div>`
       : '';
     // 장소 정보 출처 표시 (OpenStreetMap은 출처 표기가 이용 조건)
-    const SOURCE_LABEL = {kakao: '카카오', openstreetmap: '© OpenStreetMap 기여자'};
+    const SOURCE_LABEL = {
+      kakao: '카카오',
+      openstreetmap: '© OpenStreetMap 기여자',
+      'public-data': '행정안전부 지정 무더위쉼터 (재난안전데이터공유플랫폼)'
+    };
     const sourceMsg = SOURCE_LABEL[spotSource]
       ? `<div class="disclosure">장소 정보: ${SOURCE_LABEL[spotSource]}</div>` : '';
     els.spotsContent.innerHTML = `${staleMsg}<div class="spot-list">${cards}</div>${emptyMsg}${sourceMsg}`;
