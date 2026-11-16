@@ -1,0 +1,51 @@
+# v로 시작하는 태그를 올리면 CHANGELOG의 그 버전 내용으로 GitHub Release를 만들고 서버 jar를 첨부한다
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: 서버 테스트와 jar 빌드
+        working-directory: server
+        run: |
+          chmod +x gradlew
+          ./gradlew test bootJar --no-daemon
+
+      - name: CHANGELOG에서 이번 버전 내용 꺼내기
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # "## v0.3.0" 줄부터 다음 "## v" 줄 전까지
+          awk -v ver="## v${VERSION}" '
+            index($0, ver) == 1 { found = 1; next }
+            found && /^## v/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "CHANGELOG.md에 ## v${VERSION} 항목이 없습니다" >&2
+            exit 1
+          fi
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+
+      - name: Release 만들기
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "우산챙겨 ${VERSION}" \
+            --notes-file release-notes.md \
+            server/build/libs/umbrella-server-${VERSION}.jar

@@ -1,5 +1,8 @@
 import "./App.css";
 
+// 날씨 판단과 주변 장소 검색은 우산챙겨 서버가 맡는다 (server/)
+const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8080";
+
 function renderHome() {
   const root = document.getElementById("root");
   root.innerHTML = `
@@ -182,7 +185,7 @@ const els = {
   let usedFallback = false;
   let lastWeather = null;
   let spotsLoadedFor = null;
-  const spotsCache = {}; // 위치+카테고리별 검색 결과 캐시
+  let staleNotice = false; // 서버가 예전 검색 결과를 대신 준 경우
   let spotCategory = 'rain'; // 'rain' | 'heat'
 
   const SEOUL = { lat:37.5665, lon:126.9780 };
@@ -240,17 +243,7 @@ const els = {
   }
   buildRainDrops();
 
-  /* ---------------- Weather code mapping ---------------- */
-  function weatherState(code){
-    if(code===0) return {key:'clear', text:'맑음', emoji:'☀️'};
-    if([1,2,3].includes(code)) return {key:'cloudy', text:'구름 많음', emoji:'⛅'};
-    if([45,48].includes(code)) return {key:'fog', text:'안개', emoji:'🌫️'};
-    if([51,53,55,56,57,61,63,65,66,67,80,81,82].includes(code)) return {key:'rain', text:'비', emoji:'🌧️'};
-    if([71,73,75,77,85,86].includes(code)) return {key:'snow', text:'눈', emoji:'❄️'};
-    if([95,96,99].includes(code)) return {key:'thunder', text:'뇌우', emoji:'⛈️'};
-    return {key:'cloudy', text:'흐림', emoji:'☁️'};
-  }
-
+  /* ---------------- Display helpers ---------------- */
   function precipLevel(mm){
     if(mm<=0) return {text:'비가 오지 않아요', level:0};
     if(mm<1) return {text:'약한 비가 내리고 있어요', level:1};
@@ -290,25 +283,21 @@ const els = {
   }
 
   /* ---------------- Render weather ---------------- */
-  function renderWeather(data, place){
-    const cur = data.current;
-    const st = weatherState(cur.weather_code);
-    lastWeather = {st, cur};
+  // 판단(비 시작 시각·옷차림·차 안 물건)은 서버가 하고, 화면은 그 결과를 그린다
+  const EMOJI = {clear:'☀️', cloudy:'⛅', fog:'🌫️', rain:'🌧️', snow:'❄️', thunder:'⛈️'};
 
-    els.hero.className = 'hero state-' + st.key;
-    setMascot(st.key);
+  function renderWeather(data){
+    lastWeather = data;
+    const key = data.condition.key;
 
-    els.condText.textContent = `${place} · ${st.text} ${st.emoji}`;
-    const feels = Math.round(cur.apparent_temperature);
-    const actual = Math.round(cur.temperature_2m);
+    els.hero.className = 'hero state-' + key;
+    setMascot(key);
+
+    els.condText.textContent = `${data.place} · ${data.condition.text} ${EMOJI[key] ?? '☁️'}`;
+    const feels = data.feelsLike;
+    const actual = data.temperature;
     const diff = feels - actual;
-    let msg = '오늘 하루도 좋은 하루 보내세요';
-    if(st.key==='rain') msg = '우산을 챙기고 물웅덩이 조심하세요';
-    else if(st.key==='thunder') msg = '천둥번개가 있어요, 외출을 주의하세요';
-    else if(st.key==='snow') msg = '눈길 미끄럼에 주의하세요';
-    else if(st.key==='clear' && actual>=28) msg = '더위에 수분 보충 잊지 마세요';
-    else if(st.key==='clear' && actual<=5) msg = '건조하고 쌀쌀하니 보습 챙기세요';
-    els.condMsg.textContent = msg;
+    els.condMsg.textContent = data.message;
 
     els.tempMain.textContent = actual;
     if(diff===0){
@@ -320,38 +309,30 @@ const els = {
     }
 
     // precipitation
-    const precipMm = cur.precipitation ?? 0;
-    const prob = data.currentProb ?? 0;
+    const precipMm = data.precipitationMm ?? 0;
     els.precipAmount.textContent = precipMm.toFixed(1);
-    els.precipProb.textContent = prob + '%';
-    els.humidity.textContent = Math.round(cur.relative_humidity_2m) + '%';
-    const lvl = precipLevel(precipMm);
-    els.precipDesc.textContent = lvl.text;
-    els.precipUpdated.textContent = new Date(cur.time).toLocaleTimeString('ko-KR',{hour:'2-digit', minute:'2-digit'}) + ' 기준';
+    els.precipProb.textContent = data.precipitationProbability + '%';
+    els.humidity.textContent = data.humidity + '%';
+    els.precipDesc.textContent = precipLevel(precipMm).text;
+    els.precipUpdated.textContent = data.observedAt.slice(11, 16) + ' 기준';
 
-    // outfit
-    const outfit = outfitFor(feels);
-    els.outfitEmoji.textContent = outfit.emoji;
-    els.outfitTitle.textContent = outfit.title;
-    els.outfitDesc.textContent = outfit.desc;
+    // outfit: 이모지만 화면이 고르고, 문구는 서버 판단을 쓴다
+    els.outfitEmoji.textContent = outfitFor(feels).emoji;
+    els.outfitTitle.textContent = data.outfit.title;
+    els.outfitDesc.textContent = data.outfit.description;
 
-    // umbrella banner
-    const willRain = st.key==='rain' || st.key==='thunder' || prob>=50;
-    if(willRain){
+    // umbrella banner: "오후 3시부터 비 소식"처럼 언제 챙겨야 하는지까지
+    if(data.umbrella.needed){
       els.umbrellaBanner.style.display = 'flex';
-      if(precipMm>0){
-        els.umbrellaText.textContent = '지금 비가 오고 있어요, 우산을 챙기세요';
-      } else {
-        els.umbrellaText.textContent = `오늘 강수확률 ${prob}%, 우산을 챙기세요`;
-      }
+      els.umbrellaText.textContent = data.umbrella.message;
       els.umbrellaSub.textContent = '외출 전 우산을 미리 준비하면 좋아요';
-      tryNotify(els.umbrellaText.textContent);
+      tryNotify(data.umbrella.message);
     } else {
       els.umbrellaBanner.style.display = 'none';
     }
 
     // heat car reminder banner (actual temp 30도 이상)
-    if(actual >= 30){
+    if(data.heatCarAlert){
       els.heatCarBanner.style.display = 'flex';
       els.heatCarText.textContent = `실외 기온이 ${actual}도예요`;
       tryNotify('실외 기온이 높아요, 차 안에 보조배터리나 캔음료를 두고 내리지 않았는지 확인하세요');
@@ -371,40 +352,13 @@ const els = {
     }
   }
 
-  /* ---------------- Fetch weather ---------------- */
-  async function fetchWeather(lat, lon){
-    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,apparent_temperature,precipitation,rain,weather_code,relative_humidity_2m,wind_speed_10m&hourly=precipitation_probability&timezone=auto`;
-    const res = await fetch(url);
-    if(!res.ok) throw new Error('weather fetch failed');
-    const data = await res.json();
-    // find matching hourly index for current time to get probability
-    let prob = 0;
-    try{
-      const idx = data.hourly.time.indexOf(data.current.time.slice(0,14)+'00'.slice(0, data.current.time.length>13?0:0));
-      // fallback: find closest hour
-      const curDate = new Date(data.current.time);
-      let bestIdx = 0, bestDiff = Infinity;
-      data.hourly.time.forEach((t,i)=>{
-        const diff = Math.abs(new Date(t) - curDate);
-        if(diff < bestDiff){ bestDiff = diff; bestIdx = i; }
-      });
-      prob = data.hourly.precipitation_probability[bestIdx] ?? 0;
-    }catch(e){ prob = 0; }
-    data.currentProb = prob;
-    return data;
-  }
-
-  async function reverseGeocode(lat, lon){
-    try{
-      const res = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=ko`);
-      const data = await res.json();
-      const city = data.city || data.locality || '';
-      const district = data.localityInfo?.administrative?.find(a=>a.adminLevel===8)?.name || data.principalSubdivision || '';
-      const label = [district, city].filter(Boolean).filter((v,i,a)=>a.indexOf(v)===i).join(' ');
-      return label || '현재 위치';
-    }catch(e){
-      return '현재 위치';
-    }
+  /* ---------------- Server API ---------------- */
+  // 서버가 이미 8초 상한으로 외부 API를 기다리므로, 화면은 그보다 조금 더(10초)만 기다린다
+  async function getJson(path, params){
+    const query = new URLSearchParams(params).toString();
+    const res = await fetch(`${API_BASE}${path}?${query}`, {signal: AbortSignal.timeout(10000)});
+    if(!res.ok) throw new Error(`${path} ${res.status}`);
+    return res.json();
   }
 
   /* ---------------- Init / geolocation ---------------- */
@@ -440,12 +394,9 @@ const els = {
 
   async function loadAll(coords){
     try{
-      const [place, weather] = await Promise.all([
-        reverseGeocode(coords.lat, coords.lon),
-        fetchWeather(coords.lat, coords.lon)
-      ]);
-      els.locationLabel.textContent = place;
-      renderWeather(weather, place);
+      const weather = await getJson('/api/weather', {lat: coords.lat, lon: coords.lon});
+      els.locationLabel.textContent = weather.place;
+      renderWeather(weather);
     }catch(e){
       els.locationLabel.textContent = '위치 정보 없음';
       els.condText.textContent = '날씨를 불러오지 못했어요';
@@ -487,10 +438,9 @@ const els = {
         <div class="state-desc">위치 정보를 기반으로 검색 중이에요</div>
       </div>`;
 
-    const st = lastWeather?.st?.key;
-    const actualTemp = lastWeather?.cur ? Math.round(lastWeather.cur.temperature_2m) : null;
+    const st = lastWeather?.condition?.key;
+    const actualTemp = lastWeather ? lastWeather.temperature : null;
 
-    let query;
     if(spotCategory === 'heat'){
       els.spotsTitle.textContent = '🧊 무더위쉼터';
       if(actualTemp!==null && actualTemp>=30){
@@ -498,7 +448,6 @@ const els = {
       } else {
         els.spotsSubtitle.textContent = '한여름 무더위를 피할 수 있는 도서관, 주민센터를 찾아드려요.';
       }
-      query = `[out:json][timeout:8];(node["amenity"="community_centre"](around:1500,${userCoords.lat},${userCoords.lon});node["amenity"="library"](around:1500,${userCoords.lat},${userCoords.lon});node["amenity"="townhall"](around:1500,${userCoords.lat},${userCoords.lon}););out body 24;`;
     } else {
       els.spotsTitle.textContent = '☔ 비 피하기 스팟';
       if(st==='rain' || st==='thunder'){
@@ -506,70 +455,23 @@ const els = {
       } else {
         els.spotsSubtitle.textContent = '장마철 갑자기 비가 쏟아져도 당황하지 마세요. 근처 카페와 음식점을 찾아드려요.';
       }
-      query = `[out:json][timeout:8];(node["amenity"="cafe"](around:1000,${userCoords.lat},${userCoords.lon});node["amenity"="restaurant"](around:1000,${userCoords.lat},${userCoords.lon}););out body 24;`;
     }
 
     try{
-      // 캐시된 결과가 있으면 즉시 표시 (같은 위치+카테고리 재방문 시 대기 없음, '다시 찾기'는 새로 검색)
-      let data = force ? null : spotsCache[key];
+      // 미러 동시 요청·캐시·장애 시 예전 결과는 서버가 맡는다. '다시 찾기'만 refresh로 새로 검색
+      const data = await getJson('/api/spots', {
+        lat: userCoords.lat, lon: userCoords.lon, category: spotCategory, refresh: !!force
+      });
 
-      if(!data){
-        // 서버 3곳에 "동시에" 요청을 보내고, 가장 먼저 성공한 응답을 사용
-        // (순차 시도는 앞 서버가 느리면 그만큼 기다려야 해서 동시 요청으로 변경)
-        const endpoints = [
-          'https://overpass-api.de/api/interpreter',
-          'https://overpass.kumi.systems/api/interpreter',
-          'https://overpass.private.coffee/api/interpreter'
-        ];
-        const controllers = endpoints.map(()=>new AbortController());
-        const attempts = endpoints.map((ep, i)=>
-          fetch(ep, {
-            method:'POST',
-            body:'data=' + encodeURIComponent(query),
-            signal: controllers[i].signal
-          }).then(res=>{
-            if(!res.ok) throw new Error('overpass ' + res.status);
-            return res.json();
-          })
-        );
-        // 전체 8초 제한: 어떤 서버도 8초 안에 응답 못 하면 실패 처리
-        const timeout = new Promise((_, rej)=>setTimeout(()=>rej(new Error('timeout')), 8000));
-        try{
-          data = await Promise.race([Promise.any(attempts), timeout]);
-        } finally {
-          controllers.forEach(c=>c.abort()); // 남은 요청은 모두 취소
-        }
-        spotsCache[key] = data;
-      }
-
-      const emojiFor = (amenity)=>{
-        if(amenity==='cafe') return '☕';
-        if(amenity==='restaurant') return '🍽️';
-        if(amenity==='library') return '📚';
-        if(amenity==='townhall') return '🏛️';
-        return '🧊';
-      };
-      const categoryFor = (amenity)=>{
-        if(amenity==='cafe') return '카페';
-        if(amenity==='restaurant') return '음식점';
-        if(amenity==='library') return '도서관';
-        if(amenity==='townhall') return '주민센터';
-        return '경로당';
-      };
-
-      let spots = (data.elements || [])
-        .filter(el=>el.tags && el.tags.name)
-        .map(el=>{
-          const dist = Math.round(haversine(userCoords.lat, userCoords.lon, el.lat, el.lon));
-          return {
-            name: el.tags.name,
-            category: categoryFor(el.tags.amenity),
-            emoji: emojiFor(el.tags.amenity),
-            dist, sponsored:false
-          };
-        })
-        .sort((a,b)=>a.dist-b.dist)
-        .slice(0,15);
+      const EMOJI_BY_CATEGORY = {'카페':'☕', '음식점':'🍽️', '도서관':'📚', '주민센터':'🏛️'};
+      const spots = data.spots.map(s=>({
+        name: s.name,
+        category: s.category,
+        emoji: EMOJI_BY_CATEGORY[s.category] ?? '🧊',
+        dist: s.distanceMeters,
+        sponsored: false
+      }));
+      staleNotice = data.stale;
 
       spotsLoadedFor = key;
 
@@ -593,7 +495,7 @@ const els = {
         <div class="state-box">
           <div class="state-emoji">📡</div>
           <div class="state-title">스팟을 불러오지 못했어요</div>
-          <div class="state-desc">네트워크 상태를 확인하고 다시 시도해주세요</div>
+          <div class="state-desc">장소 검색이 잠시 붐비고 있어요. 조금 뒤에 다시 시도해주세요</div>
           <div class="state-btn" id="spotsRetry">다시 시도</div>
         </div>`;
       document.getElementById('spotsRetry')?.addEventListener('click', ()=>loadSpots(true));
@@ -625,7 +527,11 @@ const els = {
         <div class="state-desc">검색 반경을 넓히거나 다른 위치에서 다시 찾아보세요</div>
       </div>` : '';
 
-    els.spotsContent.innerHTML = `<div class="spot-list">${cards}</div>${emptyMsg}`;
+    // 검색 서버가 모두 실패해서 전에 찾아 둔 결과를 보여 줄 때는 그 사실을 알린다
+    const staleMsg = staleNotice
+      ? `<div class="notice-banner" style="display:flex; margin:0 20px 12px;">🕒 지금은 검색이 원활하지 않아 조금 전에 찾은 결과를 보여드려요</div>`
+      : '';
+    els.spotsContent.innerHTML = `${staleMsg}<div class="spot-list">${cards}</div>${emptyMsg}`;
   }
 
   function escapeHtml(str){
