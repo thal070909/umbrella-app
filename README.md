@@ -2,66 +2,106 @@
 
 > 비 알림부터 무더위쉼터까지, 오늘 날씨에 딱 맞는 준비를 도와주는 토스 미니앱
 
-토스 앱인토스 **7월 바이브코딩 챌린지 "미니앱과 함께하는 여름"** 출품작입니다.
+토스 앱인토스 **7월 바이브코딩 챌린지 "미니앱과 함께하는 여름"** 출품작에서 시작해, 백엔드 서버를 붙여 고도화하고 있습니다. 버전별 변경 내용은 [CHANGELOG](CHANGELOG.md)와 [Releases](https://github.com/thal070909/umbrella-app/releases)에 있습니다.
 
 ## 주요 기능
 
 **🏠 홈**
-- 현재 위치 기반 실시간 날씨 · 온도 · 체감온도 표시
-- 날씨에 따라 표정이 바뀌는 구름 마스코트와 빗방울 애니메이션
-- 시간당 강수량 · 강수확률 · 습도 카드
-- 체감온도 8단계 구간별 옷차림 추천
-- 비 예보 시 "우산 챙기세요" 알림 배너
-- 기온 30도 이상일 때 차량 내 물건(보조배터리 · 캔음료) 방치 주의 배너
+- 현재 위치 기반 실시간 날씨 · 온도 · 체감온도
+- **"오후 3시부터 비 소식이 있어요"**: 앞으로 12시간 안에 처음 비가 오는 시각을 알려 줘서 우산을 챙길지 바로 정할 수 있습니다
+- 체감온도 8단계 옷차림 추천, 기온 30도 이상이면 차 안 물건(보조배터리 · 캔음료) 주의 배너
+- 날씨에 따라 표정이 바뀌는 구름 마스코트
 
 **☔ 비 피하기 스팟**
-- 갑자기 비가 올 때 반경 1km 내 카페 · 음식점을 도보 시간과 함께 안내
-- 제휴 매장 우선 노출 슬롯 및 광고 배너 영역 (수익화 확장 고려)
+- 반경 1km 카페 · 음식점을 도보 시간과 도로명 주소로 안내 (카카오 로컬)
 
 **🧊 무더위쉼터**
-- 한여름 무더위를 피할 수 있는 근처 도서관 · 주민센터 안내
+- 행정안전부 지정 무더위쉼터를 찾고, **지금 운영 중인 곳을 먼저** 보여 줍니다 (평일 운영시간 · 주말 개방 · 냉방기 표시)
+
+## 구조
+
+```
+토스 앱(웹뷰) ──▶ 우산챙겨 서버 (Spring Boot) ──┬─▶ Open-Meteo (날씨)
+                                                  ├─▶ BigDataCloud (동네 이름)
+                                                  ├─▶ 카카오 로컬 (카페·음식점)
+                                                  ├─▶ 재난안전데이터공유플랫폼 (무더위쉼터, 하루 1번 전량)
+                                                  └─▶ OpenStreetMap Overpass (키가 없거나 위가 실패할 때)
+```
+
+앱은 화면만 그리고, 판단(비 시작 시각 · 옷차림 · 운영 중 여부)과 외부 API 장애 대응은 서버가 맡습니다.
+
+## 사용자 입장에서 정한 것
+
+| 불편했던 순간 | 정한 것 |
+|---|---|
+| 강수확률 숫자로는 우산을 챙길지 판단하기 어렵다 | 12시간 안의 첫 비 소식 시각을 "오후 3시부터"로 알려 준다 |
+| 공개 검색 서버가 느리면 스피너가 최악 36초 돈다 | 미러 3곳 동시 요청 후 가장 먼저 성공한 응답, 전체 8초 상한 |
+| 검색 서버가 모두 실패하면 빈 화면이다 | 24시간 안에 받아 둔 결과를 "조금 전에 찾은 결과"라고 알리고 보여 준다 |
+| 가까운 쉼터가 문을 닫았을 수 있다 | 운영 중 → 시간 모름 → 문 닫음 순으로 정렬하고 배지로 표시 |
+| 서버 문제인데 "네트워크를 확인하세요"라고 하면 사용자를 의심하게 한다 | "장소 검색이 잠시 붐비고 있어요"로 안내 |
+| 위치 권한을 거부하면 앱이 멈춘다 | 서울 기준으로 바로 보여 주고 기준 위치를 배너로 알린다 |
+
+## API
+
+| 요청 | 설명 |
+|---|---|
+| `GET /api/weather?lat=&lon=` | 날씨, 동네 이름, 우산(`umbrella.message`, `rainStartsAt`), 옷차림, 차 안 물건 주의 |
+| `GET /api/spots?lat=&lon=&category=rain\|heat&refresh=` | 근처 장소. `source`(kakao / public-data / openstreetmap), `stale`, 장소마다 `detail`, `openNow` |
+| `GET /actuator/health` | 서버 상태 |
+
+오류는 `{"code", "message"}` 형식입니다. `INVALID_INPUT`(400), `TOO_MANY_REQUESTS`(429), `WEATHER_UNAVAILABLE` · `SPOTS_UNAVAILABLE`(503)
+
+## 실행
+
+```bash
+# 서버 (localhost:8080)
+cd server
+./gradlew bootRun
+
+# 앱 (localhost:5173). 서버 주소는 .env.example 참고
+npm install
+npm run dev
+```
+
+Docker로 서버 실행:
+
+```bash
+docker build -t umbrella-server server
+docker run -p 8080:8080 -v umbrella-data:/app/data \
+  -e KAKAO_REST_API_KEY=... -e SAFETYDATA_SERVICE_KEY=... umbrella-server
+```
+
+## 서버 환경 변수
+
+| 이름 | 설명 | 없으면 |
+|---|---|---|
+| `KAKAO_REST_API_KEY` | 카카오 디벨로퍼스 REST API 키 | 비 피하기도 OpenStreetMap으로 찾음 |
+| `SAFETYDATA_SERVICE_KEY` | 재난안전데이터공유플랫폼 무더위쉼터 인증키 | 무더위쉼터도 OpenStreetMap으로 찾음 |
+| `UMBRELLA_ALLOWED_ORIGINS` | 앱을 띄우는 주소(쉼표로 여러 개) | `http://localhost:5173` |
+| `UMBRELLA_RATE_LIMIT_PER_MINUTE` | 한 사람이 1분에 보낼 수 있는 요청 수 | 60 |
+| `SHELTER_SNAPSHOT_PATH` | 무더위쉼터 저장 파일 위치 | `./data/shelters.json` |
+| `PORT` | 서버 포트 | 8080 |
 
 ## 기술 스택
 
 | 구분 | 사용 기술 |
 |---|---|
-| 프레임워크 | Vite + Vanilla JavaScript |
-| 플랫폼 | 앱인토스 WebView SDK (`@apps-in-toss/web-framework`) |
-| 날씨 데이터 | [Open-Meteo API](https://open-meteo.com/) |
-| 역지오코딩 | BigDataCloud Reverse Geocoding API |
-| 장소 검색 | OpenStreetMap Overpass API (미러 3중화 · 동시 요청 · 캐시 적용) |
-| 폰트 | Pretendard |
-
-## 실행 방법
-
-```bash
-# 의존성 설치
-npm install
-
-# 개발 서버 실행 (localhost:5173)
-npm run dev
-
-# 앱 번들(.ait) 빌드
-npm run build
-```
-
-샌드박스 앱에서 테스트하려면 개발 서버 실행 후 `intoss://umbrella-app` 스킴으로 접근하세요.
+| 앱 | Vite + Vanilla JavaScript, 앱인토스 WebView SDK |
+| 서버 | Java 21, Spring Boot 4, Caffeine 캐시, 가상 스레드 |
+| 데이터 | Open-Meteo, BigDataCloud, 카카오 로컬, 재난안전데이터공유플랫폼, OpenStreetMap Overpass |
+| 배포 | Docker, GitHub Actions (PR 테스트·이미지 빌드, 태그 시 Release 자동 생성) |
 
 ## 프로젝트 구조
 
 ```
 umbrella-app/
-├── src/
-│   ├── app.js          # 앱 로직 (날씨 조회, 스팟 검색, 화면 렌더링)
-│   ├── App.css         # 토스 스타일 UI (카드 레이아웃, 애니메이션)
-│   └── main.js
-├── granite.config.ts   # 앱인토스 설정 (appName, 브랜드, 빌드)
-├── vite.config.js
-└── index.html
+├── src/                 # 앱 화면 (날씨·스팟 렌더링)
+├── server/              # 우산챙겨 서버
+│   └── src/main/java/com/umbrella/
+│       ├── weather/     # 날씨 판단 (비 시작 시각, 옷차림)
+│       ├── spot/        # 비 피하기·무더위쉼터 검색, 미러 동시 요청
+│       ├── shelter/     # 무더위쉼터 동기화·위치 색인·운영시간
+│       └── common/      # 요청 제한, 오류 응답
+├── CHANGELOG.md
+└── .github/workflows/   # ci.yml, release.yml
 ```
-
-## 구현 포인트
-
-- **스팟 검색 안정화**: 무료 Overpass 공개 서버의 과부하 문제를 미러 서버 3곳 동시 요청(가장 빠른 응답 채택) + 전체 8초 타임아웃 + 위치별 결과 캐시로 해결
-- **위치 폴백**: 위치 권한 거부 시 서울 기준으로 자동 전환 + 안내 배너 표시
-- **상태별 UI**: 로딩 스피너, 빈 결과, 네트워크 오류 화면과 재시도 버튼까지 처리
