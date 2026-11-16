@@ -91,7 +91,7 @@ class SpotServiceTest {
     }
 
     private static UmbrellaProperties properties(String kakaoKey, Duration timeout) {
-        return new UmbrellaProperties(List.of(), "test", null,
+        return new UmbrellaProperties(List.of(), "test", 60, null,
                 new UmbrellaProperties.Spots(ENDPOINTS, timeout, Duration.ofMinutes(30), Duration.ofHours(24)),
                 new UmbrellaProperties.Kakao(kakaoKey, "http://kakao.test", Duration.ofSeconds(2)),
                 new UmbrellaProperties.Shelter("", "http://shelter.test", "DSSP-IF-10942", 1000, "build/none.json",

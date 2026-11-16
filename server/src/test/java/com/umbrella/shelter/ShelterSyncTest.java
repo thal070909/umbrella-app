@@ -75,7 +75,7 @@ class ShelterSyncTest {
     }
 
     private ShelterSync sync(FakeApi api) {
-        UmbrellaProperties properties = new UmbrellaProperties(List.of(), "test", null, null, null,
+        UmbrellaProperties properties = new UmbrellaProperties(List.of(), "test", 60, null, null, null,
                 new UmbrellaProperties.Shelter("key", "http://shelter.test", "DSSP-IF-10942", 2,
                         tempDir.resolve("shelters.json").toString(), Duration.ofHours(24)));
         return new ShelterSync(api, properties, JsonMapper.builder().build(), executor, CLOCK);

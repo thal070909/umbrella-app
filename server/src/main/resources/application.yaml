@@ -1,10 +1,26 @@
 server:
-  port: 8080
+  port: ${PORT:8080}
+  # 배포 환경이 서버를 바꿔 끼울 때 처리 중인 요청은 마치고 내린다
+  shutdown: graceful
+  # 로드밸런서 뒤에서도 원래 사용자 IP를 알 수 있게 (요청 제한에 사용)
+  forward-headers-strategy: native
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      # 외부 API(카카오·공공데이터) 상태는 넣지 않는다. 외부가 느려도 우리 서버는 살아 있다고 답해야 교체되지 않는다
+      show-details: never
 
 umbrella:
   # 토스 미니앱(웹뷰)과 로컬 개발 서버에서 부를 수 있게 허용할 출처
   allowed-origins:
     - http://localhost:5173
+  # 한 사람(IP)이 1분에 보낼 수 있는 요청 수. 카카오·공공데이터 키 한도를 지킨다
+  rate-limit-per-minute: ${UMBRELLA_RATE_LIMIT_PER_MINUTE:60}
   # 외부 공개 API에 보낼 앱 이름. 운영 시 연락처를 붙이려면 UMBRELLA_USER_AGENT로 바꾼다
   user-agent: ${UMBRELLA_USER_AGENT:umbrella-app/0.1}
   weather:
